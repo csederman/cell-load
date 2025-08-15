@@ -50,6 +50,8 @@ class PerturbationBatchSampler(Sampler):
         self.use_batch = use_batch
         self.seed = seed
         self.epoch = epoch
+        self._groups = self._build_groups() 
+        self._rebuild_for_epoch(self.epoch) 
 
         if self.test and self.batch_size != 1:
             logger.warning(
@@ -100,6 +102,32 @@ class PerturbationBatchSampler(Sampler):
         logger.info(
             f"Sampler created with {len(self.batches)} batches in {end_time - start_time:.2f} seconds."
         )
+
+    def _build_groups(self) -> list[np.ndarray]:
+        """Group global indices by (cell[, batch], pert) once; return list of arrays."""
+        groups_map: dict[tuple, list[int]] = {}
+        global_offset = 0
+        for subset in self.dataset.datasets:
+            base_dataset = subset.dataset
+            indices = np.asarray(subset.indices)
+            cache: H5MetadataCache = self.metadata_caches[base_dataset.h5_path]
+
+            cell_codes = cache.cell_type_codes[indices]
+            pert_codes = cache.pert_codes[indices]
+            if self.use_batch:
+                batch_codes = cache.batch_codes[indices]
+                keys = zip(batch_codes.tolist(), cell_codes.tolist(), pert_codes.tolist())
+            else:
+                keys = zip(cell_codes.tolist(), pert_codes.tolist())
+
+            global_indices = np.arange(global_offset, global_offset + len(indices))
+            for k, gi in zip(keys, global_indices.tolist()):
+                groups_map.setdefault(k, []).append(gi)
+
+            global_offset += len(subset)
+
+        # compact to arrays
+        return [np.asarray(v, dtype=np.int64) for v in groups_map.values()]
 
     def _create_batches(self) -> list[list[int]]:
         """
@@ -157,37 +185,60 @@ class PerturbationBatchSampler(Sampler):
 
         return all_batches
 
+    # def _get_rank_sentences(self) -> list[list[int]]:
+    #     """
+    #     Get the subset of sentences that this rank should process.
+    #     Sentences are shuffled using epoch-based seed, then distributed across ranks.
+    #     """
+    #     # Shuffle sentences using epoch-based seed for consistent ordering across ranks
+    #     shuffled_sentences = self.sentences.copy()
+    #     np.random.RandomState(self.seed + self.epoch).shuffle(shuffled_sentences)
+
+    #     # Calculate sentence distribution across processes
+    #     total_sentences = len(shuffled_sentences)
+    #     base_sentences = total_sentences // self.num_replicas
+    #     remainder = total_sentences % self.num_replicas
+
+    #     # Calculate number of sentences for this specific rank
+    #     if self.rank < remainder:
+    #         num_sentences_for_rank = base_sentences + 1
+    #     else:
+    #         num_sentences_for_rank = base_sentences
+
+    #     # Calculate starting sentence index for this rank
+    #     start_sentence_idx = self.rank * base_sentences + min(self.rank, remainder)
+    #     end_sentence_idx = start_sentence_idx + num_sentences_for_rank
+
+    #     rank_sentences = shuffled_sentences[start_sentence_idx:end_sentence_idx]
+
+    #     logger.info(
+    #         f"Rank {self.rank}: Processing {len(rank_sentences)} sentences "
+    #         f"(indices {start_sentence_idx} to {end_sentence_idx - 1} of {total_sentences})"
+    #     )
+
+    #     return rank_sentences
+    
     def _get_rank_sentences(self) -> list[list[int]]:
-        """
-        Get the subset of sentences that this rank should process.
-        Sentences are shuffled using epoch-based seed, then distributed across ranks.
-        """
-        # Shuffle sentences using epoch-based seed for consistent ordering across ranks
-        shuffled_sentences = self.sentences.copy()
-        np.random.RandomState(self.seed + self.epoch).shuffle(shuffled_sentences)
+        """Partition epoch-sentences across ranks; do NOT reshuffle again."""
+        # sentences were already epoch-shuffled deterministically in _rebuild_for_epoch
+        sentences = self.sentences
+        total = len(sentences)
+        base = total // self.num_replicas
+        rem = total % self.num_replicas
 
-        # Calculate sentence distribution across processes
-        total_sentences = len(shuffled_sentences)
-        base_sentences = total_sentences // self.num_replicas
-        remainder = total_sentences % self.num_replicas
-
-        # Calculate number of sentences for this specific rank
-        if self.rank < remainder:
-            num_sentences_for_rank = base_sentences + 1
+        if self.rank < rem:
+            num_for_rank = base + 1
+            start = self.rank * (base + 1)
         else:
-            num_sentences_for_rank = base_sentences
+            num_for_rank = base
+            start = self.rank * base + rem
 
-        # Calculate starting sentence index for this rank
-        start_sentence_idx = self.rank * base_sentences + min(self.rank, remainder)
-        end_sentence_idx = start_sentence_idx + num_sentences_for_rank
-
-        rank_sentences = shuffled_sentences[start_sentence_idx:end_sentence_idx]
-
+        end = start + num_for_rank
+        rank_sentences = sentences[start:end]
         logger.info(
             f"Rank {self.rank}: Processing {len(rank_sentences)} sentences "
-            f"(indices {start_sentence_idx} to {end_sentence_idx - 1} of {total_sentences})"
+            f"(indices {start}..{end-1} of {total})"
         )
-
         return rank_sentences
 
     def _process_subset(self, global_offset: int, subset: Subset) -> list[list[int]]:
@@ -250,38 +301,74 @@ class PerturbationBatchSampler(Sampler):
 
         return subset_batches
 
-    def _create_sentences(self) -> list[list[int]]:
-        """
-        Process each subset sequentially (across all datasets) and combine the batches.
-        """
-        global_offset = 0
-        all_batches = []
-        for subset in self.dataset.datasets:
-            subset_batches = self._process_subset(global_offset, subset)
-            all_batches.extend(subset_batches)
-            global_offset += len(subset)
+    # def _create_sentences(self) -> list[list[int]]:
+    #     """
+    #     Process each subset sequentially (across all datasets) and combine the batches.
+    #     """
+    #     global_offset = 0
+    #     all_batches = []
+    #     for subset in self.dataset.datasets:
+    #         subset_batches = self._process_subset(global_offset, subset)
+    #         all_batches.extend(subset_batches)
+    #         global_offset += len(subset)
 
-        np.random.shuffle(all_batches)
-        return all_batches
+    #     np.random.shuffle(all_batches)
+    #     return all_batches
 
-    def __iter__(self) -> Iterator[list[int]]:
-        # Shuffle the order of batches each time we iterate in non-distributed mode.
-        if not self.distributed:
-            self.batches = self._create_batches()
+    def _create_sentences_epoch(self, rng: np.random.Generator) -> list[list[int]]:
+        """Reshuffle each group and re-chunk to sentences for this epoch."""
+        all_sentences: list[list[int]] = []
+        for arr in self._groups:
+            perm = rng.permutation(arr)
+            # chunk into sentences of length cell_sentence_len
+            for i in range(0, len(perm), self.cell_sentence_len):
+                chunk = perm[i : i + self.cell_sentence_len].tolist()
+                if len(chunk) < self.cell_sentence_len:
+                    if self.drop_last:
+                        continue
+                    if not self.test:  # pad by resampling within the group (train only)
+                        need = self.cell_sentence_len - len(chunk)
+                        pad = rng.choice(perm, size=need, replace=True).tolist()
+                        chunk += pad
+                    # in test, keep partial chunk as-is
+                all_sentences.append(chunk)
+
+        rng.shuffle(all_sentences)  # shuffle sentence order for this epoch
+        return all_sentences
+    
+    def _rebuild_for_epoch(self, epoch: int) -> None:
+        self.epoch = int(epoch)
+        rng = np.random.default_rng(self.seed + self.epoch)
+        self.sentences = self._create_sentences_epoch(rng)
+        self.batches = self._create_batches()
+
+    def __iter__(self):
         yield from self.batches
 
     def __len__(self) -> int:
         return len(self.batches)
 
     def set_epoch(self, epoch: int) -> None:
-        """
-        Set the epoch for this sampler.
+        self._rebuild_for_epoch(epoch)
 
-        This ensures all replicas use a different random ordering for each epoch.
+    # def __iter__(self) -> Iterator[list[int]]:
+    #     # Shuffle the order of batches each time we iterate in non-distributed mode.
+    #     if not self.distributed:
+    #         self.batches = self._create_batches()
+    #     yield from self.batches
 
-        Args:
-            epoch: Epoch number
-        """
-        self.epoch = epoch
-        # Recreate batches for new epoch (sentences remain the same)
-        self.batches = self._create_batches()
+    # def __len__(self) -> int:
+    #     return len(self.batches)
+
+    # def set_epoch(self, epoch: int) -> None:
+    #     """
+    #     Set the epoch for this sampler.
+
+    #     This ensures all replicas use a different random ordering for each epoch.
+
+    #     Args:
+    #         epoch: Epoch number
+    #     """
+    #     self.epoch = epoch
+    #     # Recreate batches for new epoch (sentences remain the same)
+    #     self.batches = self._create_batches()
