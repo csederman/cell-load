@@ -80,7 +80,10 @@ class PerturbationBatchSampler(Sampler):
             self.metadata_caches[base_dataset.h5_path] = base_dataset.metadata_cache
 
         # Create batches using the code-based grouping.
-        self.sentences = self._create_sentences()
+        # self.sentences = self._create_sentences()
+        self._groups = self._build_groups() 
+        self._rebuild_for_epoch(self.epoch)
+        
         sentence_lens = [len(sentence) for sentence in self.sentences]
         avg_num = np.mean(sentence_lens)
         std_num = np.std(sentence_lens)
