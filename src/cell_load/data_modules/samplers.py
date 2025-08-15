@@ -50,8 +50,6 @@ class PerturbationBatchSampler(Sampler):
         self.use_batch = use_batch
         self.seed = seed
         self.epoch = epoch
-        self._groups = self._build_groups() 
-        self._rebuild_for_epoch(self.epoch) 
 
         if self.test and self.batch_size != 1:
             logger.warning(
