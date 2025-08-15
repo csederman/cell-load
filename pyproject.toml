@@ -1,6 +1,6 @@
 [project]
 name = "cell-load"
-version = "0.7.7"
+version = "0.7.10"
 description = "Dataloaders for training models on huge single-cell datasets"
 readme = "README.md"
 authors = [
@@ -8,6 +8,7 @@ authors = [
     { name = "Yusuf Roohani", email = "yusuf.roohani@arcinstitute.org" },
     { name = "Noam Teyssier", email = "noam.teyssier@arcinstitute.org" },
     { name = "Rishi Verma", email = "rishi.verma@arcinstitute.org" },
+    { name = "Beatrice Bevilacqua", email = "beatrice.bevilacqua@arcinstitute.org" },
 ]
 requires-python = ">=3.10,<3.13"
 dependencies = ["torch>=1.13.0", "anndata>=0.9.1", "lightning>=2.0.0", "toml>=0.10.2"]

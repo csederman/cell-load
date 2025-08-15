@@ -152,7 +152,7 @@ class PerturbationBatchSampler(Sampler):
             )
 
         # Add the last meta-batch if it exists
-        if current_batch:
+        if current_batch and not self.drop_last:
             all_batches.append(current_batch)
 
         return all_batches

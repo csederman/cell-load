@@ -8,11 +8,11 @@ class MetadataConcatDataset(ConcatDataset):
 
     def __init__(self, datasets: list[Dataset]):
         super().__init__(datasets)
-        base = datasets[0].dataset
-        self.embed_key = base.embed_key
-        self.control_pert = base.control_pert
-        self.pert_col = base.pert_col
-        self.batch_col = base.batch_col
+        self.base = datasets[0].dataset
+        self.embed_key = self.base.embed_key
+        self.control_pert = self.base.control_pert
+        self.pert_col = self.base.pert_col
+        self.batch_col = self.base.batch_col
 
         for ds in datasets:
             md = ds.dataset

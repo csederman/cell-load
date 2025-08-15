@@ -3,9 +3,7 @@ import os
 import traceback
 
 import numpy as np
-import pandas as pd
 import pytest
-import torch
 import torch.distributed as dist
 
 from cell_load.data_modules.samplers import PerturbationBatchSampler
@@ -206,6 +204,22 @@ class TestDistributedPerturbationBatchSampler:
             ep1_batch = result["ep1_batch_data"][0]
             assert np.array_equal(ep0_batch, ep1_batch) == False, (
                 f"Epoch 1 batches are the same as epoch 0 for process {result['rank']}"
+            )
+
+    def test_last_batch_not_same_every_epoch(self, distributed_test_results):
+        """Test that last batch is not the same every epoch"""
+        results = distributed_test_results
+
+        # Check for errors
+        for result in results:
+            assert "error" not in result, f"Process failed: {result.get('error')}"
+
+        # Check that last batch is not the same every epoch
+        for result in results:
+            ep0_batch = result["batch_data"][-1]
+            ep1_batch = result["ep1_batch_data"][-1]
+            assert np.array_equal(ep0_batch, ep1_batch) == False, (
+                f"Last batch is the same every epoch for process {result['rank']}"
             )
 
 

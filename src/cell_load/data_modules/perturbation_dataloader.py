@@ -49,6 +49,8 @@ class PerturbationDataModule(LightningDataModule):
         n_basal_samples: int = 1,
         should_yield_control_cells: bool = True,
         cell_sentence_len: int = 512,
+        cache_perturbation_control_pairs: bool = False,
+        drop_last: bool = False,
         **kwargs,  # missing perturbation_features_file  and store_raw_basal for backwards compatibility
     ):
         """
@@ -66,6 +68,8 @@ class PerturbationDataModule(LightningDataModule):
             output_space: The output space for model predictions (gene or latent, which uses embed_key)
             basal_mapping_strategy: One of {"batch","random","nearest","ot"}
             n_basal_samples: Number of control cells to sample per perturbed cell
+            cache_perturbation_control_pairs: If True cache perturbation-control pairs at the start of training and reuse them.
+            drop_last: Whether to drop the last sentence set if it is smaller than cell_sentence_len
         """
         super().__init__()
 
@@ -79,6 +83,7 @@ class PerturbationDataModule(LightningDataModule):
         self.num_workers = num_workers
         self.random_seed = random_seed
         self.rng = np.random.default_rng(random_seed)
+        self.drop_last = drop_last
 
         # H5 field names
         self.pert_col = pert_col
@@ -92,6 +97,7 @@ class PerturbationDataModule(LightningDataModule):
         self.n_basal_samples = n_basal_samples
         self.cell_sentence_len = cell_sentence_len
         self.should_yield_control_cells = should_yield_control_cells
+        self.cache_perturbation_control_pairs = cache_perturbation_control_pairs
 
         # Optional behaviors
         self.map_controls = kwargs.get("map_controls", True)
@@ -181,6 +187,7 @@ class PerturbationDataModule(LightningDataModule):
             "n_basal_samples": self.n_basal_samples,
             "should_yield_control_cells": self.should_yield_control_cells,
             "cell_sentence_len": self.cell_sentence_len,
+            "cache_perturbation_control_pairs": self.cache_perturbation_control_pairs,
             # Include the optional behaviors
             "map_controls": self.map_controls,
             "perturbation_features_file": self.perturbation_features_file,
@@ -220,6 +227,7 @@ class PerturbationDataModule(LightningDataModule):
         # Extract the kwargs that were passed to __init__
         kwargs = {
             "map_controls": save_dict.pop("map_controls", True),
+            "cache_perturbation_control_pairs": save_dict.pop("cache_perturbation_control_pairs", False),
             "perturbation_features_file": save_dict.pop(
                 "perturbation_features_file", None
             ),
@@ -358,7 +366,7 @@ class PerturbationDataModule(LightningDataModule):
         sampler = PerturbationBatchSampler(
             dataset=ds,
             batch_size=batch_size,
-            drop_last=False,
+            drop_last=self.drop_last,
             cell_sentence_len=self.cell_sentence_len,
             test=test,
             use_batch=use_batch,
@@ -370,7 +378,7 @@ class PerturbationDataModule(LightningDataModule):
             num_workers=self.num_workers,
             collate_fn=collate_fn,
             pin_memory=True,
-            prefetch_factor=4 if not test else None,
+            prefetch_factor=4 if not test and self.num_workers > 0 else None,
         )
 
     def _setup_global_maps(self):
@@ -438,6 +446,9 @@ class PerturbationDataModule(LightningDataModule):
     ) -> PerturbationDataset:
         """Create a base PerturbationDataset instance."""
         mapping_kwargs = {"map_controls": self.map_controls}
+        
+        # Add cache_perturbation_control_pairs to mapping strategy kwargs
+        mapping_kwargs["cache_perturbation_control_pairs"] = self.cache_perturbation_control_pairs
 
         return PerturbationDataset(
             name=dataset_name,
