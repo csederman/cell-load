@@ -76,14 +76,23 @@ class PerturbationBatchSampler(Sampler):
         # Create caches for all unique H5 files.
         self.metadata_caches = {}
         for subset in self.dataset.datasets:
-            base_dataset: PerturbationDataset = subset.dataset
+            # Handle different dataset types: Subset, MixupPerturbationDataset, or direct PerturbationDataset
+            if hasattr(subset, "dataset"):
+                # This is a Subset
+                base_dataset: PerturbationDataset = subset.dataset  # type: ignore
+            elif hasattr(subset, "_pd"):
+                # This is a MixupPerturbationDataset
+                base_dataset: PerturbationDataset = subset._pd  # type: ignore
+            else:
+                # This is a direct PerturbationDataset
+                base_dataset: PerturbationDataset = subset  # type: ignore
             self.metadata_caches[base_dataset.h5_path] = base_dataset.metadata_cache
 
         # Create batches using the code-based grouping.
         # self.sentences = self._create_sentences()
-        self._groups = self._build_groups() 
+        self._groups = self._build_groups()
         self._rebuild_for_epoch(self.epoch)
-        
+
         sentence_lens = [len(sentence) for sentence in self.sentences]
         avg_num = np.mean(sentence_lens)
         std_num = np.std(sentence_lens)
@@ -109,15 +118,34 @@ class PerturbationBatchSampler(Sampler):
         groups_map: dict[tuple, list[int]] = {}
         global_offset = 0
         for subset in self.dataset.datasets:
-            base_dataset = subset.dataset
-            indices = np.asarray(subset.indices)
-            cache: H5MetadataCache = self.metadata_caches[base_dataset.h5_path]
+            # Handle different dataset types: Subset, MixupPerturbationDataset, or direct PerturbationDataset
+            if hasattr(subset, "dataset"):
+                # This is a Subset
+                base_dataset = subset.dataset  # type: ignore
+                indices = np.asarray(subset.indices)  # type: ignore
+            elif hasattr(subset, "_pd"):
+                # This is a MixupPerturbationDataset - need to get indices from it
+                base_dataset = subset._pd  # type: ignore
+                # For MixupPerturbationDataset, we need to get all indices it covers
+                if hasattr(subset, "_indices") and subset._indices is not None:
+                    indices = np.asarray(subset._indices)  # type: ignore
+                else:
+                    # If no specific indices, use all indices from the base dataset
+                    indices = np.arange(len(subset))  # type: ignore
+            else:
+                # This is a direct PerturbationDataset
+                base_dataset = subset  # type: ignore
+                indices = np.arange(len(subset))  # type: ignore
+
+            cache: H5MetadataCache = self.metadata_caches[base_dataset.h5_path]  # type: ignore
 
             cell_codes = cache.cell_type_codes[indices]
             pert_codes = cache.pert_codes[indices]
             if self.use_batch:
                 batch_codes = cache.batch_codes[indices]
-                keys = zip(batch_codes.tolist(), cell_codes.tolist(), pert_codes.tolist())
+                keys = zip(
+                    batch_codes.tolist(), cell_codes.tolist(), pert_codes.tolist()
+                )
             else:
                 keys = zip(cell_codes.tolist(), pert_codes.tolist())
 
@@ -125,7 +153,7 @@ class PerturbationBatchSampler(Sampler):
             for k, gi in zip(keys, global_indices.tolist()):
                 groups_map.setdefault(k, []).append(gi)
 
-            global_offset += len(subset)
+            global_offset += len(subset)  # type: ignore
 
         # compact to arrays
         return [np.asarray(v, dtype=np.int64) for v in groups_map.values()]
@@ -218,7 +246,7 @@ class PerturbationBatchSampler(Sampler):
     #     )
 
     #     return rank_sentences
-    
+
     def _get_rank_sentences(self) -> list[list[int]]:
         """Partition epoch-sentences across ranks; do NOT reshuffle again."""
         # sentences were already epoch-shuffled deterministically in _rebuild_for_epoch
@@ -238,7 +266,7 @@ class PerturbationBatchSampler(Sampler):
         rank_sentences = sentences[start:end]
         logger.info(
             f"Rank {self.rank}: Processing {len(rank_sentences)} sentences "
-            f"(indices {start}..{end-1} of {total})"
+            f"(indices {start}..{end - 1} of {total})"
         )
         return rank_sentences
 
@@ -253,9 +281,25 @@ class PerturbationBatchSampler(Sampler):
             (cell_type, perturbation) pairs can be identified using np.unique.
           - For each unique pair, shuffles the indices and splits them into batches.
         """
-        base_dataset = subset.dataset
-        indices = np.array(subset.indices)
-        cache: H5MetadataCache = self.metadata_caches[base_dataset.h5_path]
+        # Handle different dataset types: Subset, MixupPerturbationDataset, or direct PerturbationDataset
+        if hasattr(subset, "dataset"):
+            # This is a Subset
+            base_dataset = subset.dataset  # type: ignore
+            indices = np.array(subset.indices)  # type: ignore
+        elif hasattr(subset, "_pd"):
+            # This is a MixupPerturbationDataset - need to get indices from it
+            base_dataset = subset._pd  # type: ignore
+            # For MixupPerturbationDataset, we need to get all indices it covers
+            if hasattr(subset, "_indices") and subset._indices is not None:  # type: ignore
+                indices = np.array(subset._indices)  # type: ignore
+            else:
+                # If no specific indices, use all indices from the base dataset
+                indices = np.arange(len(subset))  # type: ignore
+        else:
+            # This is a direct PerturbationDataset
+            base_dataset = subset  # type: ignore
+            indices = np.arange(len(subset))  # type: ignore
+        cache: H5MetadataCache = self.metadata_caches[base_dataset.h5_path]  # type: ignore
 
         # Use codes directly rather than names.
         cell_codes = cache.cell_type_codes[indices]
@@ -336,7 +380,7 @@ class PerturbationBatchSampler(Sampler):
 
         rng.shuffle(all_sentences)  # shuffle sentence order for this epoch
         return all_sentences
-    
+
     def _rebuild_for_epoch(self, epoch: int) -> None:
         self.epoch = int(epoch)
         rng = np.random.default_rng(self.seed + self.epoch)
