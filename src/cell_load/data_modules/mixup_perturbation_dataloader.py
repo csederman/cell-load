@@ -60,7 +60,7 @@ class MixupPerturbationDataModule(LightningDataModule):
         mixup_p: float = 1.0,
         mixup_same_pert_only: bool = True,
         mixup_feature_keys: tuple[str, ...] = (
-            "pert_cell_emb",
+            "ctrl_cell_counts",
             "ctrl_cell_emb",
             "pert_emb",
         ),

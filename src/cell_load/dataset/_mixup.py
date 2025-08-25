@@ -72,7 +72,7 @@ def _choose_mix_fn(space: str):
 @torch.no_grad()
 def _resolve_pert_ids(
     batch: MutableMapping[str, torch.Tensor],
-    pert_key_candidates: Sequence[str] = ("pert_id", "pert", "pert_idx", "pert_onehot"),
+    pert_key_candidates: Sequence[str] = ("pert_emb", "pert_onehot", "pert_id", "pert", "pert_idx"),
 ) -> torch.Tensor | None:
     """Try to extract a per-sample perturbation id vector of shape (B,).
 
@@ -145,10 +145,11 @@ class MixupSpec:
     space: str = "log1p"  # 'linear' | 'log' | 'log1p'
     same_pert_only: bool = True
     pert_key_candidates: Tuple[str, ...] = (
-        "pert_id",
-        "pert",
-        "pert_idx",
-        "pert_onehot",
+        "pert_emb",  # PerturbationDataset's one-hot/embedding key
+        "pert_onehot",  # Alternative name
+        "pert_id",  # Generic perturbation ID 
+        "pert",  # Short form
+        "pert_idx",  # Index form
     )
     feature_keys: Tuple[str, ...] = ("x_pre",)  # tensors to mix as inputs
     target_keys: Tuple[str, ...] = ("x_post",)  # tensors to mix as targets/labels
@@ -241,10 +242,11 @@ class MixupCallback(nn.Module):
         space: str = "log1p",
         same_pert_only: bool = True,
         pert_key_candidates: Sequence[str] = (
-            "pert_id",
-            "pert",
-            "pert_idx",
-            "pert_onehot",
+            "pert_emb",  # PerturbationDataset's one-hot/embedding key
+            "pert_onehot",  # Alternative name
+            "pert_id",  # Generic perturbation ID
+            "pert",  # Short form
+            "pert_idx",  # Index form
         ),
         feature_keys: Sequence[str] = ("x_pre",),
         target_keys: Sequence[str] = ("x_post",),
@@ -282,7 +284,7 @@ def wrap_collate_with_mixup(
     p: float = 1.0,
     space: str = "log1p",
     same_pert_only: bool = True,
-    pert_key_candidates: Sequence[str] = ("pert_id", "pert", "pert_idx", "pert_onehot"),
+    pert_key_candidates: Sequence[str] = ("pert_emb", "pert_onehot", "pert_id", "pert", "pert_idx"),
     feature_keys: Sequence[str] = ("x_pre",),
     target_keys: Sequence[str] = ("x_post",),
     extra_mix_keys: Sequence[str] = (),
