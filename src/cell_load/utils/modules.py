@@ -1,7 +1,8 @@
-from ..data_modules import PerturbationDataModule
+from ..data_modules import PerturbationDataModule, MixupPerturbationDataModule
 
 DATA_MODULE_DICT = dict(
     PerturbationDataModule=PerturbationDataModule,
+    MixupPerturbationDataModule=MixupPerturbationDataModule,
 )
 
 
