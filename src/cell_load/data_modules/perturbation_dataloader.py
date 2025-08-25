@@ -14,7 +14,11 @@ from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
 from ..config import ExperimentConfig
-from ..dataset import MetadataConcatDataset, PerturbationDataset
+from ..dataset import (
+    MetadataConcatDataset,
+    PerturbationDataset,
+    MixupPerturbationDataset,
+)
 from ..mapping_strategies import BatchMappingStrategy, RandomMappingStrategy
 from ..utils.data_utils import (
     GlobalH5MetadataCache,
@@ -51,6 +55,18 @@ class PerturbationDataModule(LightningDataModule):
         cell_sentence_len: int = 512,
         cache_perturbation_control_pairs: bool = False,
         drop_last: bool = False,
+        # Mixup parameters
+        use_mixup: bool = False,
+        mixup_alpha: float = 0.4,
+        mixup_p: float = 1.0,
+        mixup_same_pert_only: bool = True,
+        mixup_feature_keys: tuple[str, ...] = (
+            "pert_cell_emb",
+            "ctrl_cell_emb",
+            "pert_emb",
+        ),
+        mixup_target_keys: tuple[str, ...] = ("pert_cell_counts", "ctrl_cell_counts"),
+        mixup_spaces_by_key: dict[str, str] | None = None,
         **kwargs,  # missing perturbation_features_file  and store_raw_basal for backwards compatibility
     ):
         """
@@ -62,14 +78,21 @@ class PerturbationDataModule(LightningDataModule):
             toml_config_path: Path to TOML configuration file
             batch_size: Batch size for PyTorch DataLoader
             num_workers: Num workers for PyTorch DataLoader
-            few_shot_percent: Fraction of data to use for few-shot tasks
             random_seed: For reproducible splits & sampling
             embed_key: Embedding key or matrix in the H5 file to use for feauturizing cells
             output_space: The output space for model predictions (gene or latent, which uses embed_key)
             basal_mapping_strategy: One of {"batch","random","nearest","ot"}
             n_basal_samples: Number of control cells to sample per perturbed cell
-            cache_perturbation_control_pairs: If True cache perturbation-control pairs at the start of training and reuse them.
+            cache_perturbation_control_pairs: If True cache perturbation-control pairs at the start
+                of training and reuse them.
             drop_last: Whether to drop the last sentence set if it is smaller than cell_sentence_len
+            use_mixup: Whether to apply mixup augmentation to training datasets
+            mixup_alpha: Beta distribution parameter for mixup (default: 0.4)
+            mixup_p: Probability of applying mixup to a given sample (default: 1.0)
+            mixup_same_pert_only: If True, mix only samples with same perturbation (default: True)
+            mixup_feature_keys: Keys of tensors to mix as features
+            mixup_target_keys: Keys of tensors to mix as targets/labels
+            mixup_spaces_by_key: Dict specifying mixing space ('linear'/'log'/'log1p') per key
         """
         super().__init__()
 
@@ -107,10 +130,25 @@ class PerturbationDataModule(LightningDataModule):
         self.store_raw_basal = kwargs.get("store_raw_basal", False)
         self.barcode = kwargs.get("barcode", False)
 
+        # Mixup parameters
+        self.use_mixup = use_mixup
+        self.mixup_alpha = mixup_alpha
+        self.mixup_p = mixup_p
+        self.mixup_same_pert_only = mixup_same_pert_only
+        self.mixup_feature_keys = mixup_feature_keys
+        self.mixup_target_keys = mixup_target_keys
+        self.mixup_spaces_by_key = mixup_spaces_by_key or {}
+
         logger.info(
             f"Initializing DataModule: batch_size={batch_size}, workers={num_workers}, "
             f"random_seed={random_seed}"
         )
+
+        if self.use_mixup:
+            logger.info(
+                f"Mixup enabled for training datasets: alpha={self.mixup_alpha}, "
+                f"p={self.mixup_p}, same_pert_only={self.mixup_same_pert_only}"
+            )
 
         # Mapping strategy
         self.basal_mapping_strategy = basal_mapping_strategy
@@ -195,6 +233,14 @@ class PerturbationDataModule(LightningDataModule):
             "normalize_counts": self.normalize_counts,
             "store_raw_basal": self.store_raw_basal,
             "barcode": self.barcode,
+            # Include mixup parameters
+            "use_mixup": self.use_mixup,
+            "mixup_alpha": self.mixup_alpha,
+            "mixup_p": self.mixup_p,
+            "mixup_same_pert_only": self.mixup_same_pert_only,
+            "mixup_feature_keys": self.mixup_feature_keys,
+            "mixup_target_keys": self.mixup_target_keys,
+            "mixup_spaces_by_key": self.mixup_spaces_by_key,
         }
 
         torch.save(save_dict, filepath)
@@ -239,8 +285,23 @@ class PerturbationDataModule(LightningDataModule):
             "barcode": save_dict.pop("barcode", True),
         }
 
+        # Extract mixup parameters with defaults for backwards compatibility
+        mixup_kwargs = {
+            "use_mixup": save_dict.pop("use_mixup", False),
+            "mixup_alpha": save_dict.pop("mixup_alpha", 0.4),
+            "mixup_p": save_dict.pop("mixup_p", 1.0),
+            "mixup_same_pert_only": save_dict.pop("mixup_same_pert_only", True),
+            "mixup_feature_keys": save_dict.pop(
+                "mixup_feature_keys", ("pert_cell_emb", "ctrl_cell_emb", "pert_emb")
+            ),
+            "mixup_target_keys": save_dict.pop(
+                "mixup_target_keys", ("pert_cell_counts", "ctrl_cell_counts")
+            ),
+            "mixup_spaces_by_key": save_dict.pop("mixup_spaces_by_key", None),
+        }
+
         # Create new instance with all the saved parameters
-        return cls(**save_dict, **kwargs)
+        return cls(**save_dict, **kwargs, **mixup_kwargs)
 
     def get_var_dims(self):
         underlying_ds: PerturbationDataset = self.test_datasets[0].dataset
@@ -454,7 +515,7 @@ class PerturbationDataModule(LightningDataModule):
             self.cache_perturbation_control_pairs
         )
 
-        return PerturbationDataset(
+        base = PerturbationDataset(
             name=dataset_name,
             h5_path=fpath,
             mapping_strategy=self.mapping_strategy_cls(
@@ -476,6 +537,35 @@ class PerturbationDataModule(LightningDataModule):
             output_space=self.output_space,
             store_raw_basal=self.store_raw_basal,
             barcode=self.barcode,
+        )
+
+        return base
+
+    def _wrap_dataset_with_mixup(
+        self, dataset: Dataset, is_training: bool = False
+    ) -> Dataset:
+        """
+        Wrap a dataset with mixup if enabled and appropriate.
+
+        Args:
+            dataset: The dataset to potentially wrap
+            is_training: Whether this dataset is for training (mixup only applied to training)
+
+        Returns:
+            The original dataset or a MixupPerturbationDataset wrapper
+        """
+        if not self.use_mixup or not is_training:
+            return dataset
+
+        return MixupPerturbationDataset(
+            dataset,
+            alpha=self.mixup_alpha,
+            p=self.mixup_p,
+            same_pert_only=self.mixup_same_pert_only,
+            feature_keys=self.mixup_feature_keys,
+            target_keys=self.mixup_target_keys,
+            spaces_by_key=self.mixup_spaces_by_key,
+            seed=self.random_seed,
         )
 
     def _setup_datasets(self):
@@ -626,7 +716,8 @@ class PerturbationDataModule(LightningDataModule):
                 subset = ds.to_subset_dataset(
                     "train", train_pert_indices, train_ctrl_indices
                 )
-                self.train_datasets.append(subset)
+                wrapped_subset = self._wrap_dataset_with_mixup(subset, is_training=True)
+                self.train_datasets.append(wrapped_subset)
                 counts["train"] = len(subset)
 
         return counts
@@ -724,7 +815,8 @@ class PerturbationDataModule(LightningDataModule):
             subset = ds.to_subset_dataset(split, pert_indices, ctrl_indices)
 
             if split == "train":
-                self.train_datasets.append(subset)
+                wrapped_subset = self._wrap_dataset_with_mixup(subset, is_training=True)
+                self.train_datasets.append(wrapped_subset)
             elif split == "val":
                 self.val_datasets.append(subset)
             elif split == "test":
@@ -744,7 +836,8 @@ class PerturbationDataModule(LightningDataModule):
         elif is_training_dataset:
             # Regular training cell type
             subset = ds.to_subset_dataset("train", pert_indices, ctrl_indices)
-            self.train_datasets.append(subset)
+            wrapped_subset = self._wrap_dataset_with_mixup(subset, is_training=True)
+            self.train_datasets.append(wrapped_subset)
             counts["train"] = len(subset)
 
         return counts
