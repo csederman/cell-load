@@ -150,7 +150,9 @@ class TestRandomMappingStrategy:
         assert strategy.n_basal_samples == 3
         assert strategy.cache_perturbation_control_pairs == True
 
-    def test_mapping_creation_at_start_cached(self, mapping_strategy_cached, indices_data):
+    def test_mapping_creation_at_start_cached(
+        self, mapping_strategy_cached, indices_data
+    ):
         """Check to see if the mapping is created at the start when caching is enabled."""
         dataset = indices_data["dataset"]
         control_indices = indices_data["control_indices"]
@@ -229,7 +231,9 @@ class TestRandomMappingStrategy:
                 )
                 cell_type_to_pert_to_control_set[cell_type][pert_name].add(control_idx)
 
-    def test_split_control_mapping_keys_contain_both_cell_types(self, mapping_strategy_cached, indices_data):
+    def test_split_control_mapping_keys_contain_both_cell_types(
+        self, mapping_strategy_cached, indices_data
+    ):
         """Make sure split_control_mapping keys contain both perturb and control cells."""
         dataset = indices_data["dataset"]
         control_indices = indices_data["control_indices"]
@@ -281,7 +285,9 @@ class TestRandomMappingStrategy:
             != strategy2.split_control_mapping["train"]
         )
 
-    def test_get_control_index_consistency_cached(self, mapping_strategy_cached, indices_data):
+    def test_get_control_index_consistency_cached(
+        self, mapping_strategy_cached, indices_data
+    ):
         """Check that get_control_index always returns the same value once the class has been initialized."""
         dataset = indices_data["dataset"]
         control_indices = indices_data["control_indices"]
@@ -303,7 +309,9 @@ class TestRandomMappingStrategy:
         assert isinstance(int(result1), int)
         assert result1 in control_indices
 
-    def test_get_control_indices_consistency_cached(self, mapping_strategy_cached, indices_data):
+    def test_get_control_indices_consistency_cached(
+        self, mapping_strategy_cached, indices_data
+    ):
         """Test that get_control_indices always returns the same values when caching is enabled."""
         dataset = indices_data["dataset"]
         control_indices = indices_data["control_indices"]
@@ -330,7 +338,9 @@ class TestRandomMappingStrategy:
         assert np.array_equal(result2, result3)
         assert len(result1) == mapping_strategy_cached.n_basal_samples
 
-    def test_backwards_compatibility_uncached(self, mapping_strategy_uncached, indices_data):
+    def test_backwards_compatibility_uncached(
+        self, mapping_strategy_uncached, indices_data
+    ):
         """Test backwards compatibility when cache_perturbation_control_pairs == False."""
         dataset = indices_data["dataset"]
         control_indices = indices_data["control_indices"]
@@ -426,7 +436,9 @@ class TestRandomMappingStrategy:
             == strategy2.split_control_mapping["train"]
         )
 
-    def test_cache_parameter_effectiveness(self, mapping_strategy_cached, mapping_strategy_uncached, indices_data):
+    def test_cache_parameter_effectiveness(
+        self, mapping_strategy_cached, mapping_strategy_uncached, indices_data
+    ):
         """Test that cache_perturbation_control_pairs parameter works correctly."""
         dataset = indices_data["dataset"]
         control_indices = indices_data["control_indices"]

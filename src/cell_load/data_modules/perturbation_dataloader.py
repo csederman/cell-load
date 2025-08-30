@@ -227,7 +227,9 @@ class PerturbationDataModule(LightningDataModule):
         # Extract the kwargs that were passed to __init__
         kwargs = {
             "map_controls": save_dict.pop("map_controls", True),
-            "cache_perturbation_control_pairs": save_dict.pop("cache_perturbation_control_pairs", False),
+            "cache_perturbation_control_pairs": save_dict.pop(
+                "cache_perturbation_control_pairs", False
+            ),
             "perturbation_features_file": save_dict.pop(
                 "perturbation_features_file", None
             ),
@@ -446,9 +448,11 @@ class PerturbationDataModule(LightningDataModule):
     ) -> PerturbationDataset:
         """Create a base PerturbationDataset instance."""
         mapping_kwargs = {"map_controls": self.map_controls}
-        
+
         # Add cache_perturbation_control_pairs to mapping strategy kwargs
-        mapping_kwargs["cache_perturbation_control_pairs"] = self.cache_perturbation_control_pairs
+        mapping_kwargs["cache_perturbation_control_pairs"] = (
+            self.cache_perturbation_control_pairs
+        )
 
         return PerturbationDataset(
             name=dataset_name,

@@ -355,7 +355,10 @@ class PerturbationDataset(Dataset):
                 gene_categories = self.h5_file["var/gene_name/categories"][:]
                 raw = gene_categories[gene_codes]
             else:
-                raw = self.h5_file["var/gene_name"][:]
+                try:
+                    raw = self.h5_file["var/gene_name"][:]
+                except:
+                    raw = self.h5_file["var/gene_name_index"][:]
             if (
                 output_space == "gene"
                 and "highly_variable" in self.h5_file["/var"].keys()
